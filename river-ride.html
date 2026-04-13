@@ -1,0 +1,2381 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>River Ride — styl Atari</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #0a0a12;
+      color: #c8f0c8;
+      font-family: "Courier New", Consolas, monospace;
+      overflow: hidden;
+      touch-action: none;
+    }
+    #wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100%;
+      padding: 8px;
+      gap: 8px;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      max-width: 100%;
+      max-height: calc(100vh - 120px);
+      border: 3px solid #3a5f3a;
+      box-shadow: 0 0 0 2px #1a2a1a, 0 8px 32px rgba(0,0,0,0.6);
+    }
+    #hud {
+      font-size: 14px;
+      letter-spacing: 0.05em;
+      text-align: center;
+      line-height: 1.4;
+    }
+    #hud span { margin: 0 12px; }
+    #overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 18, 10, 0.92);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      z-index: 10;
+    }
+    #overlay h1 {
+      margin: 0 0 8px;
+      font-size: clamp(1.5rem, 5vw, 2.2rem);
+      color: #7fdc7f;
+      text-shadow: 0 0 12px #2a6a2a;
+    }
+    #overlay p { margin: 8px 0; max-width: 420px; color: #9ab89a; }
+    #overlay kbd {
+      display: inline-block;
+      padding: 2px 8px;
+      background: #1e2e1e;
+      border: 1px solid #4a6a4a;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    #btn {
+      margin-top: 20px;
+      padding: 12px 28px;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: bold;
+      color: #0a120a;
+      background: linear-gradient(180deg, #8fdf8f, #4a9a4a);
+      border: 2px solid #6fcf6f;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    #btn:hover { filter: brightness(1.08); }
+    #btn:active { transform: scale(0.98); }
+    .hidden { display: none !important; }
+    #scores {
+      margin-top: 14px;
+      font-size: 0.82em;
+      color: #7fbb7f;
+      line-height: 1.7;
+    }
+    #scores h3 { margin: 0 0 4px; color: #aaddaa; font-size: 1em; letter-spacing: 0.1em; }
+    #scores ol { margin: 0; padding-left: 1.4em; }
+    #scores li { color: #c8f0c8; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="c" width="1000" height="820"></canvas>
+    <div id="hud">
+      <span id="scoreEl">WYNIK 0</span>
+      <span id="fuelEl">PALIWO</span>
+      <span id="livesEl">ŻYCIA 3</span>
+    </div>
+  </div>
+  <div id="overlay">
+    <h1>RIVER RIDE</h1>
+    <p>Inspiracja: <strong>River Raid</strong> (Atari). Przy 80 pkt zaczyna padac deszcz. Czolgi na brzegach (etap 2+) strzelaja do Ciebie — nie mozna ich zniszczyc!</p>
+    <p>
+      <kbd>←→↑↓</kbd> / <kbd>WASD</kbd> — ruch &nbsp;·&nbsp;
+      <kbd>Spacja</kbd> — strzal &nbsp;·&nbsp;
+      <kbd>Ctrl</kbd> — rakieta AOE &nbsp;·&nbsp;
+      <kbd>Alt</kbd> — ☢ atomowa
+    </p>
+    <p style="font-size:0.85em; color:#6a8a6a;">
+      Co 5000 pkt: losowe ulepszenie &nbsp;|&nbsp;
+      Co 10000 pkt: +1 rakieta atomowa (niszczy caly ekran)
+    </p>
+    <p style="font-size:0.85em; color:#6a8a6a;">
+      <span style="color:#ffcc00">●</span> F = szybkie dzialo (tymczasowe) &nbsp;
+      <span style="color:#44aaff">●</span> S = tarcza &nbsp;
+      <span style="color:#44cc44">●</span> krazownik = zycie
+    </p>
+    <p style="font-size:0.85em; color:#6a8a6a;">
+      Etap 1: normalna gra &nbsp;|&nbsp;
+      Etap 2 (1000 pkt): czolgi &nbsp;|&nbsp;
+      Etap 3 (3000 pkt): burza &nbsp;|&nbsp;
+      Etap 4 (7000 pkt): noc
+    </p>
+    <button type="button" id="btn">START / RESTART</button>
+    <div id="scores"></div>
+  </div>
+
+  <script>
+(function () {
+  "use strict";
+
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+  const overlay = document.getElementById("overlay");
+  const btn = document.getElementById("btn");
+  const scoreEl = document.getElementById("scoreEl");
+  const fuelEl = document.getElementById("fuelEl");
+  const livesEl = document.getElementById("livesEl");
+
+  const W = canvas.width;
+  const H = canvas.height;
+
+  let running = false;
+  let paused = false;
+  let score = 0;
+  let lives = 3;
+  let fuel = 100;
+  let scroll = 0;
+  let scrollSpeed = 0.92;
+  let rngSeed = 12345;
+
+  // Weather
+  let rainDrops = [];
+  let rainNotified = false;
+  let lightningFlash = 0;
+  let lightningTimer = 200;
+
+  // Upgrades
+  let upgrades = { guns: 0, armor: 0, speed: 0, fuel: 0, shield: 0 };
+  let lastUpgradeScore = 0;
+
+  // Rockets
+  let rockets = 0;
+  let rocketAmmo = [];
+  let rocketFireCd = 0;
+
+  // Fast-shoot power-up
+  let fastShootTimer = 0;
+
+  // Atomic rocket
+  let atomicRockets = 0;
+  let atomicAmmo = [];
+  let atomicBlast = 0;
+  let lastAtomicScore = 0;
+
+  // Enemy bullets
+  let enemyBullets = [];
+
+  // Stage tracking
+  let lastStage = 1;
+
+  // Notification
+  let notification = { text: "", timer: 0 };
+
+  // Trump
+  let trumpMsg = { lines: [], timer: 0 };
+
+  function showTrump(lines) {
+    trumpMsg.lines = lines;
+    trumpMsg.timer = 220;
+  }
+
+  // Refueling state
+  let isRefueling = false;
+
+  // Shield
+  let shieldTimer = 0;
+
+  // Combo multiplier
+  let combo = 0;
+  let comboTimer = 0;
+  let comboMult = 1;
+
+  // ── Audio ──────────────────────────────────────────────
+  let audioCtx = null;
+  function ac() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+  function playShoot() {
+    try {
+      const a = ac(); const g = a.createGain(); const o = a.createOscillator();
+      o.connect(g); g.connect(a.destination);
+      o.frequency.setValueAtTime(900, a.currentTime);
+      o.frequency.exponentialRampToValueAtTime(300, a.currentTime + 0.08);
+      g.gain.setValueAtTime(0.18, a.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.09);
+      o.start(); o.stop(a.currentTime + 0.09);
+    } catch(e) {}
+  }
+  function playExplosion() {
+    try {
+      const a = ac(); const sr = a.sampleRate;
+      const buf = a.createBuffer(1, sr * 0.35, sr);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/d.length, 1.5);
+      const src = a.createBufferSource(); src.buffer = buf;
+      const g = a.createGain(); src.connect(g); g.connect(a.destination);
+      g.gain.setValueAtTime(0.5, a.currentTime);
+      src.start();
+    } catch(e) {}
+  }
+  function playHurt() {
+    try {
+      const a = ac(); const g = a.createGain(); const o = a.createOscillator();
+      o.type = "sawtooth"; o.connect(g); g.connect(a.destination);
+      o.frequency.setValueAtTime(220, a.currentTime);
+      o.frequency.exponentialRampToValueAtTime(55, a.currentTime + 0.35);
+      g.gain.setValueAtTime(0.35, a.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.35);
+      o.start(); o.stop(a.currentTime + 0.35);
+    } catch(e) {}
+  }
+  function playRefuelTick() {
+    try {
+      const a = ac(); const g = a.createGain(); const o = a.createOscillator();
+      o.connect(g); g.connect(a.destination);
+      o.frequency.setValueAtTime(440 + (fuel / 100) * 220, a.currentTime);
+      g.gain.setValueAtTime(0.07, a.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.06);
+      o.start(); o.stop(a.currentTime + 0.06);
+    } catch(e) {}
+  }
+  function playShield() {
+    try {
+      const a = ac(); const g = a.createGain(); const o = a.createOscillator();
+      o.type = "sine"; o.connect(g); g.connect(a.destination);
+      o.frequency.setValueAtTime(500, a.currentTime);
+      o.frequency.exponentialRampToValueAtTime(1200, a.currentTime + 0.15);
+      g.gain.setValueAtTime(0.2, a.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.3);
+      o.start(); o.stop(a.currentTime + 0.3);
+    } catch(e) {}
+  }
+  // ───────────────────────────────────────────────────────
+
+  // High scores
+  function getScores() {
+    try { return JSON.parse(localStorage.getItem("riverRideScores") || "[]"); } catch(e) { return []; }
+  }
+  function saveScore(s) {
+    if (s <= 0) return;
+    const arr = getScores();
+    arr.push(s);
+    arr.sort((a, b) => b - a);
+    arr.splice(5);
+    localStorage.setItem("riverRideScores", JSON.stringify(arr));
+  }
+  function updateScoresDisplay() {
+    const el = document.getElementById("scores");
+    const arr = getScores();
+    if (!arr.length) { el.innerHTML = ""; return; }
+    el.innerHTML = "<h3>— TOP 5 WYNIKÓW —</h3><ol>"
+      + arr.map(s => `<li>${s} pkt</li>`).join("")
+      + "</ol>";
+  }
+
+  // Combo scoring
+  function addScore(pts) {
+    combo++;
+    comboTimer = 200;
+    comboMult = Math.min(4, 1 + Math.floor(combo / 2));
+    const earned = pts * comboMult;
+    score += earned;
+    if (comboMult >= 2) showNotification("x" + comboMult + " COMBO! +" + earned);
+  }
+
+  function rnd() {
+    rngSeed = (rngSeed * 1103515245 + 12345) >>> 0;
+    return (rngSeed >>> 16) / 65536;
+  }
+
+  function getStage() {
+    if (score < 1000) return 1;
+    if (score < 3000) return 2;
+    if (score < 7000) return 3;
+    return 4;
+  }
+
+  function riverAt(yWorld) {
+    const t = yWorld * 0.022;
+    const center = W * 0.5 + Math.sin(t) * 38 + Math.sin(yWorld * 0.008 + 1.2) * 14;
+    const halfW = 230 + Math.sin(yWorld * 0.014) * 22 + Math.cos(yWorld * 0.005) * 12;
+    return { cx: center, hw: Math.max(205, halfW) };
+  }
+
+  function bankEdges(yWorld) {
+    const r = riverAt(yWorld);
+    return { left: r.cx - r.hw, right: r.cx + r.hw };
+  }
+
+  const player = { x: W / 2, y: H - 64, w: 16, h: 22, shootCd: 0 };
+
+  let bullets = [];
+  let entities = [];
+  let particles = [];
+  let decorations = [];
+  let nextSpawnY = 0;
+  let nextDecorY = 0;
+  let nextCityDecorY = 0;
+
+  // ── Upgrade system (auto-random) ──────────────────────
+  const UPGRADE_POOL = [
+    { id: "guns",    label: "SZYBSZE DZIALO",    maxLevel: 4  },
+    { id: "armor",   label: "PANCERZ / +ZYCIE",  maxLevel: 99 },
+    { id: "speed",   label: "TURBOSILNIK",        maxLevel: 3  },
+    { id: "fuel",    label: "DODATKOWY ZBIORNIK", maxLevel: 3  },
+    { id: "rockets", label: "RAKIETY x3",         maxLevel: 99 },
+    { id: "shield",  label: "SUPER-TARCZA",       maxLevel: 3  },
+  ];
+
+  function applyRandomUpgrade() {
+    const pool = UPGRADE_POOL.filter(u =>
+      upgrades[u.id] === undefined || upgrades[u.id] < u.maxLevel
+    );
+    if (!pool.length) return;
+    const u = pool[Math.floor(Math.random() * pool.length)];
+    const id = u.id;
+    if (id === "guns")    { upgrades.guns   = (upgrades.guns   || 0) + 1; showNotification("ULEPSZENIE: " + u.label); }
+    if (id === "armor")   { lives++; upgrades.armor = (upgrades.armor || 0) + 1; showNotification("ULEPSZENIE: " + u.label); }
+    if (id === "speed")   { upgrades.speed  = (upgrades.speed  || 0) + 1; showNotification("ULEPSZENIE: " + u.label); }
+    if (id === "fuel")    { upgrades.fuel   = (upgrades.fuel   || 0) + 1; showNotification("ULEPSZENIE: " + u.label); }
+    if (id === "rockets") { rockets += 3; showNotification("ULEPSZENIE: " + u.label); }
+    if (id === "shield")  { upgrades.shield = (upgrades.shield || 0) + 1; showNotification("ULEPSZENIE: " + u.label); }
+  }
+  // ──────────────────────────────────────────────────────
+
+  function resetGame() {
+    paused = false;
+    score = 0;
+    lives = 3;
+    fuel = 100;
+    scroll = 0;
+    scrollSpeed = 0.92;
+    rngSeed = Date.now() & 0xffffffff;
+    bullets = [];
+    entities = [];
+    particles = [];
+    enemyBullets = [];
+    rainDrops = [];
+    rainNotified = false;
+    lightningFlash = 0;
+    lightningTimer = 200;
+    lastStage = 1;
+    notification = { text: "", timer: 0 };
+    trumpMsg = { lines: [], timer: 0 };
+    decorations = [];
+    shieldTimer = 0;
+    combo = 0;
+    comboTimer = 0;
+    comboMult = 1;
+    upgrades = { guns: 0, armor: 0, speed: 0, fuel: 0, shield: 0 };
+    lastUpgradeScore = 0;
+    rockets = 0;
+    rocketAmmo = [];
+    rocketFireCd = 0;
+    fastShootTimer = 0;
+    atomicRockets = 0;
+    atomicAmmo = [];
+    atomicBlast = 0;
+    lastAtomicScore = 0;
+    nextSpawnY = scroll + 40;
+    nextDecorY = scroll + 10;
+    nextCityDecorY = scroll + 10;
+    player.x = W / 2;
+    player.y = H - 56;
+    player.shootCd = 0;
+  }
+
+  function showNotification(text) {
+    notification.text = text;
+    notification.timer = 150;
+  }
+
+  function spawnAhead() {
+    const stage = getStage();
+    const fuelBias = Math.min(0.10, score / 3500 * 0.10);
+    const fuelCut = 0.09 + fuelBias;
+    const bridgeChance = Math.min(0.13, 0.055 + stage * 0.02);
+    const minGap = Math.max(24, 46 - stage * 4);
+
+    while (nextSpawnY < scroll + H + 220) {
+      const y = nextSpawnY;
+      const b = bankEdges(y);
+      const riverW = b.right - b.left;
+      const cx = (b.left + b.right) / 2;
+      const roll = rnd();
+
+      if (roll < bridgeChance && riverW > 88) {
+        const deckW = riverW * 0.5;
+        const half = deckW / 2;
+        entities.push({
+          type: "bridge",
+          y,
+          left: Math.max(b.left + 4, cx - half),
+          right: Math.min(b.right - 4, cx + half),
+          hp: 5,
+          maxHp: 5,
+        });
+      } else if (roll < fuelCut + bridgeChance) {
+        const margin = Math.max(40, riverW * 0.35);
+        entities.push({
+          type: "fuel",
+          y,
+          x: cx + (rnd() - 0.5) * (riverW - margin),
+          w: 44,
+          h: 16,
+          fuelLeft: 85,
+          taken: false,
+        });
+      } else if (roll < fuelCut + bridgeChance + 0.05) {
+        const margin = Math.max(36, riverW * 0.3);
+        entities.push({
+          type: "shield_pickup",
+          y,
+          x: cx + (rnd() - 0.5) * (riverW - margin),
+          w: 14,
+          h: 14,
+          taken: false,
+        });
+      } else if (roll < fuelCut + bridgeChance + 0.08) {
+        const margin = Math.max(36, riverW * 0.3);
+        entities.push({
+          type: "fast_shoot",
+          y,
+          x: cx + (rnd() - 0.5) * (riverW - margin),
+          w: 14,
+          h: 14,
+          taken: false,
+        });
+      } else if (roll < fuelCut + bridgeChance + 0.25) {
+        const shipHp = stage >= 3 ? 3 : 2;
+        entities.push({
+          type: "ship",
+          y,
+          x: cx + (rnd() - 0.5) * (riverW - 56),
+          w: 20,
+          h: 10,
+          hp: shipHp,
+          maxHp: shipHp,
+          shootCd: stage >= 2 ? (150 + (rnd() * 120 | 0)) : 9999,
+        });
+      } else if (roll < fuelCut + bridgeChance + 0.42) {
+        const heliHp = stage >= 3 ? 2 : 1;
+        const side = rnd() < 0.5 ? -1 : 1;
+        entities.push({
+          type: "heli",
+          y,
+          x: cx + side * (riverW * 0.28),
+          vx: side * (0.2 + rnd() * 0.3) * (1 + stage * 0.12),
+          w: 14,
+          h: 12,
+          hp: heliHp,
+          maxHp: heliHp,
+          shootCd: stage >= 2 ? (130 + (rnd() * 100 | 0)) : 9999,
+        });
+      } else {
+        const side = rnd() < 0.5 ? -1 : 1;
+        entities.push({
+          type: "plane",
+          y,
+          x: cx + side * (riverW * 0.28),
+          vx: side * (0.16 + rnd() * 0.22) * (1 + stage * 0.12),
+          w: 14,
+          h: 12,
+          hp: 1,
+          maxHp: 1,
+        });
+      }
+
+      // Rescue boat — gives extra life
+      if (rnd() < 0.055) {
+        entities.push({
+          type: "rescue_boat",
+          y,
+          x: cx + (rnd() - 0.5) * (riverW - 50),
+          w: 18,
+          h: 10,
+          taken: false,
+        });
+      }
+
+      // Tanks on banks (stage 2+) — rzadsze
+      if (stage >= 2 && rnd() < 0.006) {
+        const tankSide = rnd() < 0.5 ? "left" : "right";
+        const tw = 16;
+        const tankY = y + (rnd() * 12 | 0);
+        const bTank = bankEdges(tankY);
+        const tankX = tankSide === "left"
+          ? bTank.left - tw * 0.5 - 3
+          : bTank.right + tw * 0.5 + 3;
+        entities.push({
+          type: "tank",
+          y: tankY,
+          x: tankX,
+          side: tankSide,
+          w: tw,
+          h: 10,
+          shootCd: 280 + (rnd() * 300 | 0),
+        });
+      }
+
+      // Stage 4: double ships
+      if (stage >= 4 && rnd() < 0.28) {
+        entities.push({
+          type: "ship",
+          y: y + 28,
+          x: cx + (rnd() < 0.5 ? -28 : 28),
+          w: 20,
+          h: 10,
+          hp: 3,
+          maxHp: 3,
+          shootCd: 100 + (rnd() * 80 | 0),
+        });
+      }
+
+      nextSpawnY += minGap + (rnd() * 28 | 0);
+    }
+  }
+
+  function decorProps(type) {
+    switch (type) {
+      case "tree":         return { w: 8 + Math.random() * 8 | 0,  h: 14 + Math.random() * 10 | 0, variant: Math.random() };
+      case "tree_burnt":   return { w: 6 + Math.random() * 6 | 0,  h: 10 + Math.random() * 8  | 0, variant: Math.random() };
+      case "ruins":        return { w: 14 + Math.random() * 12 | 0, h: 8 + Math.random() * 8  | 0, variant: Math.random() };
+      case "bunker":       return { w: 14 + Math.random() * 8  | 0, h: 8 + Math.random() * 4  | 0, variant: Math.random() };
+      case "wreck":        return { w: 12 + Math.random() * 8  | 0, h: 6 + Math.random() * 4  | 0, variant: Math.random() };
+      case "watchtower":   return { w: 10 + Math.random() * 4  | 0, h: 28 + Math.random() * 10 | 0, variant: Math.random() };
+      case "village_house":return { w: 16 + Math.random() * 8  | 0, h: 12 + Math.random() * 6  | 0, variant: Math.random() };
+      case "oil_pump":     return { w: 16 + Math.random() * 4  | 0, h: 18 + Math.random() * 5  | 0, variant: Math.random() };
+      case "antenna":      return { w: 8,                            h: 22 + Math.random() * 8  | 0, variant: Math.random() };
+      case "dock":         return { w: 20 + Math.random() * 12 | 0, h: 6,                           variant: Math.random() };
+      case "city_block":   return { w: 22 + Math.random() * 18 | 0, h: 32 + Math.random() * 24 | 0, variant: Math.random() };
+      case "skyscraper":   return { w: 14 + Math.random() * 8  | 0, h: 50 + Math.random() * 30 | 0, variant: Math.random() };
+      case "factory":      return { w: 28 + Math.random() * 12 | 0, h: 22 + Math.random() * 12 | 0, variant: Math.random() };
+      case "church":       return { w: 16 + Math.random() * 8  | 0, h: 34 + Math.random() * 12 | 0, variant: Math.random() };
+      case "water_tower":  return { w: 14 + Math.random() * 6  | 0, h: 30 + Math.random() * 10 | 0, variant: Math.random() };
+      case "warehouse":    return { w: 30 + Math.random() * 20 | 0, h: 16 + Math.random() * 8  | 0, variant: Math.random() };
+      case "crater": {
+        const r = 4 + Math.random() * 7 | 0;
+        return { w: r * 2, h: r, r, variant: Math.random() };
+      }
+      case "flag_usa": return { w: 18, h: 16, variant: Math.random() };
+      case "flag_rus": return { w: 18, h: 16, variant: Math.random() };
+      default: return { w: 8, h: 8, r: 4, variant: 0 };
+    }
+  }
+
+  function pickDecorType(stage, side) {
+    const r = Math.random();
+    if (r < 0.07) return side === "right" ? "flag_usa" : "flag_rus";
+    if (stage >= 3) {
+      if (r < 0.22) return "crater";
+      if (r < 0.34) return "ruins";
+      if (r < 0.46) return "tree_burnt";
+      if (r < 0.55) return "bunker";
+      if (r < 0.63) return "wreck";
+      if (r < 0.71) return "watchtower";
+      if (r < 0.78) return "oil_pump";
+      if (r < 0.84) return "antenna";
+      return "tree";
+    } else if (stage >= 2) {
+      if (r < 0.16) return "crater";
+      if (r < 0.28) return "ruins";
+      if (r < 0.38) return "tree_burnt";
+      if (r < 0.47) return "bunker";
+      if (r < 0.55) return "watchtower";
+      if (r < 0.63) return "oil_pump";
+      if (r < 0.70) return "dock";
+      if (r < 0.76) return "antenna";
+      return "tree";
+    } else {
+      if (r < 0.08) return "crater";
+      if (r < 0.16) return "tree_burnt";
+      if (r < 0.28) return "village_house";
+      if (r < 0.38) return "watchtower";
+      if (r < 0.47) return "dock";
+      if (r < 0.55) return "antenna";
+      if (r < 0.62) return "oil_pump";
+      return "tree";
+    }
+  }
+
+  function pickCityType(stage) {
+    const r = Math.random();
+    if (stage >= 3) {
+      // War-torn city — ruins, factories, fewer intact buildings
+      if (r < 0.30) return "ruins";
+      if (r < 0.50) return "factory";
+      if (r < 0.64) return "warehouse";
+      if (r < 0.76) return "city_block";
+      if (r < 0.86) return "water_tower";
+      return "skyscraper";
+    } else if (stage >= 2) {
+      if (r < 0.20) return "ruins";
+      if (r < 0.36) return "city_block";
+      if (r < 0.50) return "factory";
+      if (r < 0.62) return "warehouse";
+      if (r < 0.73) return "skyscraper";
+      if (r < 0.82) return "water_tower";
+      return "church";
+    } else {
+      // Peaceful city
+      if (r < 0.24) return "city_block";
+      if (r < 0.42) return "skyscraper";
+      if (r < 0.54) return "church";
+      if (r < 0.66) return "warehouse";
+      if (r < 0.77) return "water_tower";
+      if (r < 0.87) return "factory";
+      return "city_block";
+    }
+  }
+
+  function spawnDecorations() {
+    const stage = getStage();
+    // Near-bank decorations
+    while (nextDecorY < scroll + H + 260) {
+      const y = nextDecorY;
+      if (Math.random() < 0.75) {
+        const type = pickDecorType(stage, "left");
+        decorations.push({ type, y, side: "left",  offset: 2 + Math.random() * 18 | 0, ...decorProps(type) });
+      }
+      if (Math.random() < 0.75) {
+        const type = pickDecorType(stage, "right");
+        decorations.push({ type, y, side: "right", offset: 2 + Math.random() * 18 | 0, ...decorProps(type) });
+      }
+      nextDecorY += 10 + (Math.random() * 14 | 0);
+    }
+    // Background city decorations — far from bank
+    while (nextCityDecorY < scroll + H + 300) {
+      const y = nextCityDecorY;
+      if (Math.random() < 0.70) {
+        const type = pickCityType(stage);
+        decorations.push({ type, y, side: "left",  offset: 55 + Math.random() * 110 | 0, ...decorProps(type) });
+      }
+      if (Math.random() < 0.70) {
+        const type = pickCityType(stage);
+        decorations.push({ type, y, side: "right", offset: 55 + Math.random() * 110 | 0, ...decorProps(type) });
+      }
+      nextCityDecorY += 22 + (Math.random() * 28 | 0);
+    }
+  }
+
+  function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+  }
+
+  function playerInRiver(px, py, pw, ph) {
+    const midY = py + ph * 0.5;
+    const worldY = scroll + (H - midY);
+    const e = bankEdges(worldY);
+    const pad = 2;
+    return px + pad >= e.left && px + pw - pad <= e.right;
+  }
+
+  function hurtPlayer() {
+    if (shieldTimer > 0) return;
+    lives -= 1;
+    fuel = Math.min(100, fuel + 25);
+    for (let i = 0; i < 20; i++) {
+      particles.push({
+        x: player.x + player.w / 2,
+        y: player.y + player.h / 2,
+        vx: (rnd() - 0.5) * 4,
+        vy: (rnd() - 0.5) * 4,
+        life: 25 + (rnd() * 15 | 0),
+        col: rnd() < 0.5 ? "#ffcc44" : "#ff6644",
+      });
+    }
+    playHurt();
+    if (lives <= 0) {
+      running = false;
+      saveScore(score);
+      updateScoresDisplay();
+      overlay.classList.remove("hidden");
+      btn.textContent = "ZAGRAJ PONOWNIE";
+    } else {
+      player.x = W / 2;
+      player.y = H - 56;
+    }
+  }
+
+  function explode(x, y, col) {
+    for (let i = 0; i < 10; i++) {
+      particles.push({
+        x, y,
+        vx: (rnd() - 0.5) * 3.5,
+        vy: (rnd() - 0.5) * 3.5,
+        life: 18 + (rnd() * 12 | 0),
+        col: col || "#fff",
+      });
+    }
+  }
+
+  // Rain
+  function initRain() {
+    for (let i = 0; i < 80; i++) {
+      rainDrops.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        speed: 4 + Math.random() * 4,
+        len: 5 + Math.random() * 8,
+      });
+    }
+  }
+
+  function updateRain() {
+    if (score < 80) return;
+    if (!rainNotified) {
+      rainNotified = true;
+      initRain();
+      showNotification("DESZCZ!");
+    }
+    for (const d of rainDrops) {
+      d.y += d.speed + scrollSpeed * 0.4;
+      d.x -= 1;
+      if (d.y > H + 10) { d.y = -10; d.x = Math.random() * W; }
+      if (d.x < -5) d.x = W + 5;
+    }
+  }
+
+  function updateLightning() {
+    if (score < 500) return;
+    if (lightningTimer > 0) { lightningTimer--; return; }
+    if (lightningFlash > 0) { lightningFlash--; return; }
+    lightningFlash = 3 + (Math.random() * 4 | 0);
+    lightningTimer = 100 + (Math.random() * 300 | 0);
+  }
+
+  const keys = Object.create(null);
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Escape" && running) {
+      paused = !paused;
+      e.preventDefault();
+      return;
+    }
+    if (paused) return;
+    keys[e.code] = true;
+    if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+         "ControlLeft", "ControlRight", "AltLeft", "AltRight"].includes(e.code)) {
+      e.preventDefault();
+    }
+  });
+  window.addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+  function detonateAll() {
+    atomicBlast = 120;
+    playExplosion();
+    playExplosion();
+    enemyBullets = [];
+    for (const ent of entities) {
+      if (ent.taken) continue;
+      if (ent.type === "fuel" || ent.type === "shield_pickup" ||
+          ent.type === "rescue_boat" || ent.type === "fast_shoot") continue;
+      const sy = H - (ent.y - scroll);
+      if (sy < -30 || sy > H + 40) continue;
+      if (ent.type === "bridge") {
+        ent.hp = 0;
+        addScore(100);
+      } else if (ent.hp !== undefined) {
+        ent.hp = 0;
+        addScore(ent.type === "ship" ? 70 : 50);
+      }
+      explode(ent.x, sy - (ent.h || 10) / 2, "#ffcc44");
+    }
+    for (let i = 0; i < 60; i++) {
+      particles.push({
+        x: rnd() * W,
+        y: rnd() * H,
+        vx: (rnd() - 0.5) * 8,
+        vy: (rnd() - 0.5) * 8,
+        life: 45 + (rnd() * 35 | 0),
+        col: rnd() < 0.5 ? "#ff8844" : "#ffee22",
+      });
+    }
+  }
+
+  function rocketExplode(rx, ry) {
+    const RADIUS = 360;
+    playExplosion();
+    for (let i = 0; i < 22; i++) {
+      particles.push({
+        x: rx, y: ry,
+        vx: (rnd() - 0.5) * 7,
+        vy: (rnd() - 0.5) * 7,
+        life: 28 + (rnd() * 20 | 0),
+        col: rnd() < 0.5 ? "#ff8844" : "#ffcc22",
+      });
+    }
+    for (const ent of entities) {
+      if (ent.taken) continue;
+      if (ent.type === "tank" || ent.type === "fuel" || ent.type === "shield_pickup" ||
+          ent.type === "rescue_boat" || ent.type === "fast_shoot") continue;
+      const sy = H - (ent.y - scroll);
+      const dist = Math.hypot(ent.x - rx, sy - ry);
+      if (dist < RADIUS) {
+        if (ent.type === "bridge") {
+          ent.hp = 0;
+          explode((ent.left + ent.right) / 2, sy - 20, "#ff8844");
+        } else {
+          ent.hp = 0;
+          addScore(ent.type === "ship" ? 70 : 50);
+          explode(ent.x, sy - ent.h / 2, "#ffaa44");
+        }
+      }
+    }
+  }
+
+  function update() {
+    if (!running || paused) return;
+
+    const stage = getStage();
+
+    // Stage transition notification
+    if (stage > lastStage) {
+      lastStage = stage;
+      const msgs = ["", "", "ETAP 2 — CZOLGI!", "ETAP 3 — BURZA!", "ETAP 4 — NOC!"];
+      showNotification(msgs[stage]);
+      const trumpTexts = [ [], [],
+        ["CZOLGI NA", "BRZEGACH!", "BELIEVE ME,", "TREMENDOUS!"],
+        ["BURZA!", "THE BEST", "STORM EVER,", "EVERYONE", "SAYS SO!"],
+        ["NOC! WE ARE", "GONNA WIN", "SO MUCH,", "YOU'LL BE", "TIRED OF", "WINNING!"],
+      ];
+      showTrump(trumpTexts[stage]);
+    }
+
+    // Atomic rocket award every 10000 pts
+    const atomicCheck = Math.floor(score / 10000);
+    if (atomicCheck > lastAtomicScore && score > 0) {
+      lastAtomicScore = atomicCheck;
+      atomicRockets++;
+      showNotification("RAKIETA ATOMOWA! [Alt]");
+    }
+
+    // Upgrade milestone every 5000 pts — auto random
+    const upgradeCheck = Math.floor(score / 5000);
+    if (upgradeCheck > lastUpgradeScore && score > 0) {
+      lastUpgradeScore = upgradeCheck;
+      applyRandomUpgrade();
+    }
+
+    if (shieldTimer > 0) shieldTimer--;
+    if (fastShootTimer > 0) fastShootTimer--;
+    if (rocketFireCd > 0) rocketFireCd--;
+    if (comboTimer > 0) { comboTimer--; } else { combo = 0; comboMult = 1; }
+
+    scroll += scrollSpeed;
+    scrollSpeed = Math.min(1.35, 0.80 + score * 0.000045);
+    const fuelDrain = 0.018 - (upgrades.fuel || 0) * 0.004;
+    fuel -= fuelDrain * scrollSpeed;
+    if (fuel <= 0 && running) {
+      hurtPlayer();
+      if (lives > 0) fuel = 70;
+      else fuel = 0;
+    }
+
+    let mx = 0, my = 0;
+    if (keys["ArrowLeft"] || keys["KeyA"]) mx -= 1;
+    if (keys["ArrowRight"] || keys["KeyD"]) mx += 1;
+    if (keys["ArrowUp"] || keys["KeyW"]) my -= 1;
+    if (keys["ArrowDown"] || keys["KeyS"]) my += 1;
+    const sp = 2.05 + (upgrades.speed || 0) * 0.4;
+    const nx = player.x + mx * sp;
+    const ny = player.y + my * sp;
+    if (playerInRiver(nx, player.y, player.w, player.h)) player.x = nx;
+    if (playerInRiver(player.x, ny, player.w, player.h)) player.y = ny;
+    player.y = Math.max(40, Math.min(H - 24, player.y));
+
+    if (player.shootCd > 0) player.shootCd--;
+    isRefueling = false;
+
+    const baseCd = Math.max(4, 12 - (upgrades.guns || 0) * 2);
+    const effectiveCd = fastShootTimer > 0 ? Math.max(2, baseCd >> 1) : baseCd;
+    if ((keys["Space"] || keys["KeyK"]) && player.shootCd === 0) {
+      bullets.push({ x: player.x + player.w / 2 - 1, y: player.y, w: 2, h: 8, vy: -6 });
+      player.shootCd = effectiveCd;
+      playShoot();
+    }
+
+    // Rocket firing
+    if ((keys["ControlLeft"] || keys["ControlRight"]) && rockets > 0 && rocketFireCd === 0) {
+      rocketAmmo.push({ x: player.x + player.w / 2, y: player.y - 2, vy: -5 });
+      rockets--;
+      rocketFireCd = 18;
+      playShoot();
+    }
+
+    // Atomic rocket firing
+    if ((keys["AltLeft"] || keys["AltRight"]) && atomicRockets > 0 && atomicAmmo.length === 0 && atomicBlast === 0) {
+      atomicAmmo.push({ x: player.x + player.w / 2, y: player.y - 4, vy: -3.5 });
+      atomicRockets--;
+    }
+
+    // Atomic rocket update
+    atomicAmmo = atomicAmmo.filter((r) => {
+      r.y += r.vy;
+      if (r.y < -24) { detonateAll(); return false; }
+      return true;
+    });
+    if (atomicBlast > 0) atomicBlast--;
+
+    spawnAhead();
+    spawnDecorations();
+    updateRain();
+    updateLightning();
+
+    // Rocket update
+    rocketAmmo = rocketAmmo.filter((r) => {
+      r.y += r.vy;
+      if (r.y < -20) return false;
+      for (const ent of entities) {
+        if (ent.taken) continue;
+        if (ent.type === "tank" || ent.type === "fuel" || ent.type === "shield_pickup" ||
+            ent.type === "rescue_boat" || ent.type === "fast_shoot") continue;
+        const sy = H - (ent.y - scroll);
+        const ex = ent.x - ent.w / 2;
+        const ey = sy - ent.h;
+        let hit = false;
+        if (ent.type === "bridge") {
+          hit = r.x > ent.left - 4 && r.x < ent.right + 4 && r.y < sy - 8 && r.y > sy - 34;
+        } else {
+          hit = rectsOverlap(r.x - 2, r.y - 5, 4, 10, ex, ey, ent.w, ent.h);
+        }
+        if (hit) { rocketExplode(r.x, r.y); return false; }
+      }
+      return true;
+    });
+
+    // Entity movement + enemy shooting
+    let bulletFiredThisFrame = false;
+    for (const e of entities) {
+      if (e.type === "plane" || e.type === "heli") {
+        e.x += e.vx;
+        const b = bankEdges(e.y);
+        const half = e.w / 2;
+        if (e.x - half < b.left + 8 || e.x + half > b.right - 8) e.vx *= -1;
+      }
+
+      // Shooting for tanks, ships (stage 2+), helis (stage 2+)
+      if (e.shootCd !== undefined && e.shootCd < 9000) {
+        const sy = H - (e.y - scroll);
+        if (sy > -20 && sy < H + 20) {
+          if (e.shootCd > 0) {
+            e.shootCd--;
+          } else {
+            if (enemyBullets.length >= 5 || bulletFiredThisFrame) {
+              e.shootCd = 30;
+            } else {
+              // Tanks fire from exact bank edge; others fire from their centre
+              let bx = e.x;
+              if (e.type === "tank") {
+                const banks = bankEdges(e.y);
+                bx = e.side === "left" ? banks.left : banks.right;
+              }
+              const dx = (player.x + player.w / 2) - bx;
+              const dy = (player.y + player.h / 2) - sy;
+              const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+              const spd = 0.55 + stage * 0.07;
+              enemyBullets.push({
+                x: bx,
+                y: sy,
+                vx: (dx / dist) * spd,
+                vy: (dy / dist) * spd,
+              });
+              bulletFiredThisFrame = true;
+              e.shootCd = Math.max(280, 550 - stage * 25) + (rnd() * 180 | 0);
+            }
+          }
+        }
+      }
+    }
+
+    // Player bullets
+    bullets = bullets.filter((b) => {
+      b.y += b.vy;
+      const bwY = scroll + (H - b.y);
+      const banks = bankEdges(bwY);
+      if (b.x < banks.left || b.x + b.w > banks.right) return false;
+      if (b.y < -10) return false;
+
+      for (const ent of entities) {
+        if (ent.taken) continue;
+        if (ent.type === "tank") continue; // tanks are unkillable (outside river)
+        const sy = H - (ent.y - scroll);
+        if (ent.type === "bridge") {
+          if (b.y < sy - 10 && b.y + b.h > sy - 28) {
+            if (b.x + b.w > ent.left && b.x < ent.right) {
+              ent.hp = (ent.hp || 1) - 1;
+              if (ent.hp <= 0) {
+                addScore(100);
+                explode((ent.left + ent.right) / 2, sy - 20, "#ff8844");
+                playExplosion();
+              }
+              return false;
+            }
+          }
+          continue;
+        }
+        if (ent.type === "fuel") continue;
+        const ex = ent.x - ent.w / 2;
+        const ey = sy - ent.h;
+        if (rectsOverlap(b.x, b.y, b.w, b.h, ex, ey, ent.w, ent.h)) {
+          ent.hp = (ent.hp || 1) - 1;
+          if (ent.hp <= 0) {
+            const pts = ent.type === "ship" ? 70 : 50;
+            addScore(pts);
+            explode(ex + ent.w / 2, ey + ent.h / 2, "#ffaa44");
+            playExplosion();
+          }
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // Enemy bullets
+    enemyBullets = enemyBullets.filter((b) => {
+      b.x += b.vx;
+      b.y += b.vy;
+      if (b.x < -10 || b.x > W + 10 || b.y < -10 || b.y > H + 10) return false;
+      if (rectsOverlap(b.x - 2, b.y - 2, 4, 4, player.x, player.y, player.w, player.h)) {
+        hurtPlayer();
+        return false;
+      }
+      return true;
+    });
+
+    // Player vs banks & entities
+    const pWorldY = scroll + (H - (player.y + player.h / 2));
+    const pb = bankEdges(pWorldY);
+    const offRiver = player.x < pb.left + 1 || player.x + player.w > pb.right - 1;
+    if (offRiver) {
+      hurtPlayer();
+    } else {
+      for (const ent of entities) {
+        const sy = H - (ent.y - scroll);
+        if (sy < -55 || sy > H + 50) continue;
+
+        if (ent.type === "bridge") {
+          if (player.y < sy - 8 && player.y + player.h > sy - 26) {
+            if (player.x + player.w > ent.left && player.x < ent.right) hurtPlayer();
+          }
+        }
+
+        if (ent.type === "fuel" && !ent.taken) {
+          const ex = ent.x - ent.w / 2;
+          const ey = sy - ent.h;
+          if (rectsOverlap(player.x, player.y, player.w, player.h, ex, ey, ent.w, ent.h)) {
+            const transfer = Math.min(1.2, ent.fuelLeft, 100 - fuel);
+            if (transfer > 0) {
+              fuel = Math.min(100, fuel + transfer);
+              ent.fuelLeft -= transfer;
+              isRefueling = true;
+              if (Math.random() < 0.12) playRefuelTick();
+            }
+            if (ent.fuelLeft <= 0 || fuel >= 99.9) {
+              ent.taken = true;
+              score += 20;
+            }
+          }
+        }
+
+        if (ent.type === "shield_pickup" && !ent.taken) {
+          const ex = ent.x - ent.w / 2;
+          const ey = sy - ent.h;
+          if (rectsOverlap(player.x, player.y, player.w, player.h, ex, ey, ent.w, ent.h)) {
+            ent.taken = true;
+            shieldTimer = 360;
+            showNotification("TARCZA AKTYWNA!");
+            playShield();
+          }
+        }
+
+        if (ent.type === "rescue_boat" && !ent.taken) {
+          const ex = ent.x - ent.w / 2;
+          const ey = sy - ent.h;
+          if (rectsOverlap(player.x, player.y, player.w, player.h, ex, ey, ent.w, ent.h)) {
+            ent.taken = true;
+            lives++;
+            showNotification("DODATKOWE ZYCIE!");
+            playShield();
+          }
+        }
+
+        if (ent.type === "fast_shoot" && !ent.taken) {
+          const ex = ent.x - ent.w / 2;
+          const ey = sy - ent.h;
+          if (rectsOverlap(player.x, player.y, player.w, player.h, ex, ey, ent.w, ent.h)) {
+            ent.taken = true;
+            fastShootTimer = 320;
+            showNotification("SZYBKIE DZIALO!");
+            playShield();
+          }
+        }
+
+        if (ent.hp !== undefined && ent.hp > 0 && ent.type !== "tank") {
+          const ex = ent.x - ent.w / 2;
+          const ey = sy - ent.h;
+          if (rectsOverlap(player.x, player.y, player.w, player.h, ex, ey, ent.w, ent.h)) {
+            ent.hp = 0;
+            score += ent.type === "ship" ? 70 : 50;
+            explode(ex + ent.w / 2, ey + ent.h / 2);
+            hurtPlayer();
+          }
+        }
+      }
+    }
+
+    entities = entities.filter((e) => {
+      const sy = H - (e.y - scroll);
+      if (sy > H + 100) return false;
+      if ((e.type === "fuel" || e.type === "shield_pickup" || e.type === "rescue_boat" || e.type === "fast_shoot") && e.taken) return false;
+      if (e.hp !== undefined && e.hp <= 0) return false;
+      return true;
+    });
+
+    decorations = decorations.filter((d) => H - (d.y - scroll) <= H + 60);
+
+    for (const p of particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life--;
+    }
+    particles = particles.filter((p) => p.life > 0);
+
+    if (notification.timer > 0) notification.timer--;
+  }
+
+  function drawRiver() {
+    const stage = getStage();
+    const grassColor = stage >= 4 ? "#141f0e" : stage >= 3 ? "#1e3010" : "#2d5016";
+    const waterColor = stage >= 4 ? "#0d1e2e" : stage >= 3 ? "#142840" : "#1e3a5c";
+
+    for (let py = 0; py < H; py += 4) {
+      const worldY = scroll + (H - py);
+      const b = bankEdges(worldY);
+      ctx.fillStyle = grassColor;
+      ctx.fillRect(0, py, b.left, 4);
+      ctx.fillRect(b.right, py, W - b.right, 4);
+      ctx.fillStyle = waterColor;
+      ctx.fillRect(b.left, py, b.right - b.left, 4);
+    }
+    ctx.strokeStyle = "rgba(100, 160, 220, 0.2)";
+    ctx.lineWidth = 1;
+    for (let py = ((scroll * 2) | 0) % 20; py < H; py += 20) {
+      const worldY = scroll + (H - py);
+      const r = riverAt(worldY);
+      ctx.beginPath();
+      ctx.moveTo(r.cx, py);
+      ctx.lineTo(r.cx, py + 10);
+      ctx.stroke();
+    }
+  }
+
+  function drawDecorations() {
+    for (const dec of decorations) {
+      const sy = H - (dec.y - scroll);
+      if (sy < -20 || sy > H + 20) continue;
+      const b = bankEdges(dec.y);
+      let sx;
+      if (dec.side === "left") {
+        sx = b.left - dec.offset - dec.w;
+        if (sx + dec.w < 0) continue;
+      } else {
+        sx = b.right + dec.offset;
+        if (sx > W) continue;
+      }
+      const ey = sy - dec.h;
+
+      // Dock: extends INTO the river from the bank — special x position
+      if (dec.type === "dock") {
+        const dockX = dec.side === "left" ? b.left : b.right - dec.w;
+        const planksY = sy - dec.h;
+        ctx.fillStyle = "#5a4020";
+        ctx.fillRect(dockX, planksY, dec.w, dec.h);
+        ctx.fillStyle = "#3a2810";
+        for (let px = dockX + 4; px < dockX + dec.w - 2; px += 5) {
+          ctx.fillRect(px, planksY, 1, dec.h);
+        }
+        ctx.fillStyle = "#2a1808";
+        ctx.fillRect(dockX + 2, sy, 3, 5);
+        ctx.fillRect(dockX + dec.w - 5, sy, 3, 5);
+        ctx.fillStyle = "#8a6040";
+        const bollardX = dec.side === "left" ? dockX + dec.w - 4 : dockX + 1;
+        ctx.fillRect(bollardX, planksY - 4, 4, 5);
+        continue;
+      }
+
+      switch (dec.type) {
+        case "tree": {
+          const g = 70 + (dec.variant * 40 | 0);
+          ctx.fillStyle = `rgb(18,${g},14)`;
+          ctx.beginPath();
+          ctx.moveTo(sx + dec.w / 2, ey);
+          ctx.lineTo(sx + dec.w, sy);
+          ctx.lineTo(sx, sy);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = "#3a2a1a";
+          ctx.fillRect(sx + dec.w / 2 - 1, sy, 2, 4);
+          break;
+        }
+        case "tree_burnt": {
+          ctx.fillStyle = "#2a1608";
+          ctx.beginPath();
+          ctx.moveTo(sx + dec.w / 2, ey);
+          ctx.lineTo(sx + dec.w, sy);
+          ctx.lineTo(sx, sy);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = "#1a0e04";
+          ctx.fillRect(sx + dec.w / 2 - 1, sy, 2, 5);
+          // ash tips
+          ctx.fillStyle = "#4a3020";
+          ctx.fillRect(sx + dec.w / 2 - 1, ey, 2, 4);
+          break;
+        }
+        case "crater": {
+          ctx.fillStyle = "#161208";
+          ctx.beginPath();
+          ctx.ellipse(sx + dec.r, sy - dec.r * 0.5, dec.r, dec.r * 0.6, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "#0e0c05";
+          ctx.beginPath();
+          ctx.ellipse(sx + dec.r, sy - dec.r * 0.5, dec.r * 0.45, dec.r * 0.28, 0, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case "ruins": {
+          // Left wall
+          ctx.fillStyle = "#5a4a3a";
+          ctx.fillRect(sx, sy - dec.h, dec.w * 0.28, dec.h);
+          // Right wall (shorter — collapsed)
+          ctx.fillStyle = "#4a3a2c";
+          ctx.fillRect(sx + dec.w * 0.55, sy - dec.h * 0.55, dec.w * 0.38, dec.h * 0.55);
+          // Rubble on ground
+          ctx.fillStyle = "#6a5a46";
+          ctx.fillRect(sx + dec.w * 0.28, sy - 4, dec.w * 0.27, 4);
+          ctx.fillRect(sx + dec.w * 0.93, sy - 3, dec.w * 0.07 + 2, 3);
+          break;
+        }
+        case "bunker": {
+          ctx.fillStyle = "#3d4d2e";
+          ctx.fillRect(sx, sy - dec.h, dec.w, dec.h);
+          // Roof overhang
+          ctx.fillStyle = "#2d3c22";
+          ctx.fillRect(sx - 2, sy - dec.h - 3, dec.w + 4, 4);
+          // Gun slit
+          ctx.fillStyle = "#161a10";
+          ctx.fillRect(sx + 4, sy - dec.h + 3, dec.w - 8, 2);
+          // Sandbag base
+          ctx.fillStyle = "#4a4030";
+          ctx.fillRect(sx, sy - 3, dec.w, 3);
+          break;
+        }
+        case "wreck": {
+          // Burnt vehicle hull
+          ctx.fillStyle = "#2e2418";
+          ctx.fillRect(sx, sy - dec.h, dec.w, dec.h);
+          ctx.fillStyle = "#1e1810";
+          ctx.fillRect(sx + dec.w * 0.2, sy - dec.h - 3, dec.w * 0.45, 4);
+          // Scorch mark
+          ctx.fillStyle = "#120a00";
+          ctx.fillRect(sx + 2, sy - dec.h + 1, 4, dec.h - 2);
+          // Track remnant
+          ctx.fillStyle = "#1a1410";
+          ctx.fillRect(sx, sy - 2, dec.w, 2);
+          break;
+        }
+        case "flag_usa": {
+          const px = sx + 2; // pole x
+          // Pole
+          ctx.fillStyle = "#8a7a5a";
+          ctx.fillRect(px, sy - 16, 2, 16);
+          // Flag background — red stripes
+          ctx.fillStyle = "#cc1111";
+          ctx.fillRect(px + 2, sy - 16, 14, 10);
+          // White stripes (alternating, 2px each)
+          ctx.fillStyle = "#eeeeee";
+          ctx.fillRect(px + 2, sy - 14, 14, 2);
+          ctx.fillRect(px + 2, sy - 10, 14, 2);
+          ctx.fillRect(px + 2, sy -  8, 14, 2);
+          // Blue canton (top-left)
+          ctx.fillStyle = "#1a3aaa";
+          ctx.fillRect(px + 2, sy - 16, 6, 6);
+          // Stars (4 white dots)
+          ctx.fillStyle = "#eeeeee";
+          ctx.fillRect(px + 3, sy - 15, 1, 1);
+          ctx.fillRect(px + 6, sy - 15, 1, 1);
+          ctx.fillRect(px + 3, sy - 12, 1, 1);
+          ctx.fillRect(px + 6, sy - 12, 1, 1);
+          break;
+        }
+        case "flag_rus": {
+          const px = sx + 2;
+          ctx.fillStyle = "#8a7a5a";
+          ctx.fillRect(px, sy - 16, 2, 16);
+          ctx.fillStyle = "#e8e8e8";
+          ctx.fillRect(px + 2, sy - 16, 14, 4);
+          ctx.fillStyle = "#1a44cc";
+          ctx.fillRect(px + 2, sy - 12, 14, 3);
+          ctx.fillStyle = "#cc1122";
+          ctx.fillRect(px + 2, sy -  9, 14, 3);
+          break;
+        }
+        case "watchtower": {
+          const mid = sx + dec.w / 2;
+          // Two legs
+          ctx.fillStyle = "#4a3a28";
+          ctx.fillRect(sx + 1, sy - dec.h, 2, dec.h);
+          ctx.fillRect(sx + dec.w - 3, sy - dec.h, 2, dec.h);
+          // Cross-braces
+          ctx.fillStyle = "#3a2a1a";
+          ctx.fillRect(sx, sy - dec.h * 0.35 | 0, dec.w, 2);
+          ctx.fillRect(sx, sy - dec.h * 0.65 | 0, dec.w, 2);
+          // Platform floor
+          ctx.fillStyle = "#5a4a38";
+          ctx.fillRect(sx - 3, sy - dec.h + 4, dec.w + 6, 4);
+          // Railing
+          ctx.fillStyle = "#3a2a18";
+          ctx.fillRect(sx - 3, sy - dec.h, dec.w + 6, 2);
+          // Roof
+          ctx.fillStyle = "#2a2018";
+          ctx.beginPath();
+          ctx.moveTo(mid, sy - dec.h - 8);
+          ctx.lineTo(sx + dec.w + 3, sy - dec.h);
+          ctx.lineTo(sx - 3, sy - dec.h);
+          ctx.closePath();
+          ctx.fill();
+          // Observer silhouette
+          ctx.fillStyle = "#1a1010";
+          ctx.fillRect(mid - 1, sy - dec.h + 1, 3, 4);
+          break;
+        }
+        case "village_house": {
+          const wallCol = dec.variant < 0.5 ? "#c8a87a" : "#b89468";
+          ctx.fillStyle = wallCol;
+          ctx.fillRect(sx, sy - dec.h, dec.w, dec.h);
+          // Roof
+          ctx.fillStyle = "#882222";
+          ctx.beginPath();
+          ctx.moveTo(sx + dec.w / 2, sy - dec.h - 7);
+          ctx.lineTo(sx + dec.w + 2, sy - dec.h);
+          ctx.lineTo(sx - 2, sy - dec.h);
+          ctx.closePath();
+          ctx.fill();
+          // Window (lit yellow)
+          ctx.fillStyle = "#ffeeaa";
+          ctx.fillRect(sx + (dec.w * 0.2 | 0), sy - (dec.h * 0.65 | 0), 4, 4);
+          // Door
+          ctx.fillStyle = "#5a3a18";
+          ctx.fillRect(sx + (dec.w * 0.55 | 0), sy - 6, 4, 6);
+          // Chimney
+          ctx.fillStyle = "#7a5a48";
+          ctx.fillRect(sx + (dec.w * 0.7 | 0), sy - dec.h - 10, 4, 8);
+          break;
+        }
+        case "oil_pump": {
+          const mid = sx + dec.w / 2;
+          // A-frame legs
+          ctx.strokeStyle = "#445533";
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(mid, sy - dec.h); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(sx + dec.w, sy); ctx.lineTo(mid, sy - dec.h); ctx.stroke();
+          // Center pole
+          ctx.fillStyle = "#556644";
+          ctx.fillRect(mid - 1, sy - dec.h, 2, dec.h);
+          // Animated rocking beam
+          const beamOff = Math.sin(Date.now() * 0.0018 + dec.variant * 6) * 5 | 0;
+          ctx.fillStyle = "#667755";
+          ctx.fillRect(mid - 8, sy - (dec.h * 0.6 | 0) + beamOff, 16, 3);
+          // Counterweight
+          ctx.fillStyle = "#445540";
+          ctx.fillRect(mid - 11, sy - (dec.h * 0.6 | 0) + beamOff - 4, 6, 7);
+          // Pump head
+          ctx.fillStyle = "#8a9a70";
+          ctx.fillRect(mid + 5, sy - (dec.h * 0.6 | 0) + beamOff + 1, 5, 5);
+          // Base
+          ctx.fillStyle = "#4a5540";
+          ctx.fillRect(sx + 2, sy - 4, dec.w - 4, 4);
+          break;
+        }
+        case "antenna": {
+          const mid = sx + dec.w / 2;
+          // Main pole
+          ctx.fillStyle = "#7a8a7a";
+          ctx.fillRect(mid - 1, sy - dec.h, 2, dec.h);
+          // Horizontal cross-bars (narrowing upward)
+          ctx.fillStyle = "#6a7a6a";
+          ctx.fillRect(sx + 1, sy - (dec.h * 0.8 | 0), dec.w - 2, 2);
+          ctx.fillRect(sx + 2, sy - (dec.h * 0.57 | 0), dec.w - 4, 2);
+          ctx.fillRect(sx + 3, sy - (dec.h * 0.35 | 0), dec.w - 6, 2);
+          // Blinking warning light
+          const blink = Math.sin(Date.now() * 0.004 + dec.variant * 5) > 0;
+          ctx.fillStyle = blink ? "#ff2200" : "#550000";
+          ctx.beginPath();
+          ctx.arc(mid, sy - dec.h - 2, 2, 0, Math.PI * 2);
+          ctx.fill();
+          // Base
+          ctx.fillStyle = "#5a6a5a";
+          ctx.fillRect(sx, sy - 4, dec.w, 4);
+          break;
+        }
+        case "city_block": {
+          // Main facade — color varies by variant
+          const wallH = dec.h;
+          const shade = 80 + (dec.variant * 40 | 0);
+          ctx.fillStyle = `rgb(${shade},${shade - 4},${shade - 10})`;
+          ctx.fillRect(sx, sy - wallH, dec.w, wallH);
+          // Darker base strip
+          ctx.fillStyle = `rgb(${shade - 20},${shade - 24},${shade - 28})`;
+          ctx.fillRect(sx, sy - 6, dec.w, 6);
+          // Roof ledge
+          ctx.fillStyle = `rgb(${shade - 15},${shade - 18},${shade - 22})`;
+          ctx.fillRect(sx - 2, sy - wallH - 3, dec.w + 4, 4);
+          // Window grid (lit + unlit)
+          const cols = Math.max(2, dec.w / 7 | 0);
+          const rows = Math.max(2, wallH / 9 | 0);
+          for (let wr = 0; wr < rows; wr++) {
+            for (let wc = 0; wc < cols; wc++) {
+              const wx = sx + 3 + wc * 7;
+              const wy = sy - wallH + 4 + wr * 9;
+              if (wx + 4 > sx + dec.w - 2) continue;
+              const litSeed = (dec.variant * 100 + wr * 10 + wc) | 0;
+              const lit = (litSeed % 3) !== 0;
+              ctx.fillStyle = lit ? "#ffee88" : "#222230";
+              ctx.fillRect(wx, wy, 4, 5);
+            }
+          }
+          break;
+        }
+        case "skyscraper": {
+          const wallH = dec.h;
+          const sh = 60 + (dec.variant * 30 | 0);
+          // Main tower
+          ctx.fillStyle = `rgb(${sh},${sh + 5},${sh + 18})`;
+          ctx.fillRect(sx, sy - wallH, dec.w, wallH);
+          // Step-back near top (setback architecture)
+          ctx.fillStyle = `rgb(${sh + 10},${sh + 14},${sh + 28})`;
+          ctx.fillRect(sx + 3, sy - wallH - 10, dec.w - 6, 10);
+          ctx.fillRect(sx + 5, sy - wallH - 18, dec.w - 10, 8);
+          // Antenna spire
+          ctx.fillStyle = "#8899aa";
+          ctx.fillRect(sx + dec.w / 2 - 1, sy - wallH - 26, 2, 16);
+          // Blinking top light
+          const blink2 = Math.sin(Date.now() * 0.003 + dec.variant * 4) > 0;
+          ctx.fillStyle = blink2 ? "#ff3300" : "#550000";
+          ctx.beginPath();
+          ctx.arc(sx + dec.w / 2, sy - wallH - 26, 2, 0, Math.PI * 2);
+          ctx.fill();
+          // Window columns
+          const cols2 = Math.max(2, dec.w / 6 | 0);
+          const rows2 = Math.max(3, wallH / 8 | 0);
+          for (let wr = 0; wr < rows2; wr++) {
+            for (let wc = 0; wc < cols2; wc++) {
+              const wx = sx + 2 + wc * 6;
+              const wy = sy - wallH + 3 + wr * 8;
+              if (wx + 3 > sx + dec.w - 2) continue;
+              const lit = ((dec.variant * 200 + wr * 7 + wc * 3) | 0) % 4 !== 0;
+              ctx.fillStyle = lit ? "#aaddff" : "#1a2030";
+              ctx.fillRect(wx, wy, 3, 4);
+            }
+          }
+          break;
+        }
+        case "factory": {
+          // Main shed
+          ctx.fillStyle = "#6a5a4a";
+          ctx.fillRect(sx, sy - dec.h, dec.w, dec.h);
+          // Sawtooth roof (industrial)
+          ctx.fillStyle = "#5a4a3c";
+          const teeth = Math.max(2, dec.w / 12 | 0);
+          const tw2 = dec.w / teeth;
+          for (let t = 0; t < teeth; t++) {
+            ctx.beginPath();
+            ctx.moveTo(sx + t * tw2, sy - dec.h);
+            ctx.lineTo(sx + t * tw2 + tw2 * 0.5, sy - dec.h - 8);
+            ctx.lineTo(sx + t * tw2 + tw2, sy - dec.h);
+            ctx.closePath();
+            ctx.fill();
+          }
+          // Chimney stack(s)
+          const numChimneys = 1 + (dec.variant > 0.5 ? 1 : 0);
+          for (let c = 0; c < numChimneys; c++) {
+            const cx2 = sx + dec.w * (0.25 + c * 0.45);
+            ctx.fillStyle = "#4a3a2e";
+            ctx.fillRect(cx2 - 4, sy - dec.h - 20, 8, 20);
+            // Smoke rings
+            ctx.fillStyle = "rgba(140,130,120,0.5)";
+            const smokeY = sy - dec.h - 22 - ((Date.now() * 0.04 + c * 30 + dec.variant * 60) % 18 | 0);
+            ctx.beginPath();
+            ctx.arc(cx2, smokeY, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 0.3;
+            ctx.beginPath();
+            ctx.arc(cx2, smokeY - 10, 7, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+          // Loading bay door
+          ctx.fillStyle = "#3a2a1e";
+          ctx.fillRect(sx + dec.w * 0.35, sy - 10, 10, 10);
+          // Windows (industrial, small)
+          ctx.fillStyle = "#ffdd88";
+          ctx.fillRect(sx + 4, sy - dec.h + 4, 6, 4);
+          ctx.fillRect(sx + dec.w - 10, sy - dec.h + 4, 6, 4);
+          break;
+        }
+        case "church": {
+          const mid = sx + dec.w / 2;
+          // Nave (main body)
+          ctx.fillStyle = "#c8bca8";
+          ctx.fillRect(sx, sy - dec.h * 0.55, dec.w, dec.h * 0.55);
+          // Tower/bell tower
+          const towerW = dec.w * 0.45 | 0;
+          const towerH = dec.h;
+          const towerX = mid - towerW / 2;
+          ctx.fillStyle = "#bfb49e";
+          ctx.fillRect(towerX, sy - towerH, towerW, towerH);
+          // Pointed roof of tower
+          ctx.fillStyle = "#7a6a58";
+          ctx.beginPath();
+          ctx.moveTo(mid, sy - towerH - 14);
+          ctx.lineTo(towerX - 2, sy - towerH);
+          ctx.lineTo(towerX + towerW + 2, sy - towerH);
+          ctx.closePath();
+          ctx.fill();
+          // Cross on top
+          ctx.fillStyle = "#f0e8d8";
+          ctx.fillRect(mid - 1, sy - towerH - 20, 2, 8);
+          ctx.fillRect(mid - 4, sy - towerH - 17, 8, 2);
+          // Arched window on tower
+          ctx.fillStyle = "#ffeecc";
+          ctx.fillRect(mid - 3, sy - towerH + 6, 6, 8);
+          ctx.beginPath();
+          ctx.arc(mid, sy - towerH + 6, 3, Math.PI, 0);
+          ctx.fill();
+          // Nave windows
+          ctx.fillStyle = "#88aaee";
+          ctx.fillRect(sx + 3, sy - dec.h * 0.45, 5, 7);
+          ctx.fillRect(sx + dec.w - 8, sy - dec.h * 0.45, 5, 7);
+          break;
+        }
+        case "water_tower": {
+          const mid = sx + dec.w / 2;
+          const tankH = dec.h * 0.45 | 0;
+          const tankY = sy - dec.h;
+          const legH = dec.h - tankH;
+          // Legs
+          ctx.fillStyle = "#6a5a44";
+          ctx.fillRect(sx + 1, tankY + tankH, 3, legH);
+          ctx.fillRect(sx + dec.w - 4, tankY + tankH, 3, legH);
+          if (dec.w > 14) {
+            ctx.fillRect(mid - 1, tankY + tankH, 2, legH);
+          }
+          // Cross brace
+          ctx.fillStyle = "#5a4a38";
+          ctx.fillRect(sx, tankY + tankH + legH * 0.45, dec.w, 2);
+          // Tank body
+          ctx.fillStyle = "#8a7a62";
+          ctx.fillRect(sx, tankY, dec.w, tankH);
+          // Tank cone roof
+          ctx.fillStyle = "#7a6a52";
+          ctx.beginPath();
+          ctx.moveTo(mid, tankY - 6);
+          ctx.lineTo(sx - 2, tankY);
+          ctx.lineTo(sx + dec.w + 2, tankY);
+          ctx.closePath();
+          ctx.fill();
+          // Tank band (horizontal ring)
+          ctx.fillStyle = "#6a5a48";
+          ctx.fillRect(sx, tankY + tankH * 0.6, dec.w, 3);
+          break;
+        }
+        case "warehouse": {
+          ctx.fillStyle = "#7a7060";
+          ctx.fillRect(sx, sy - dec.h, dec.w, dec.h);
+          // Barrel roof (rounded ridge)
+          ctx.fillStyle = "#6a6050";
+          ctx.fillRect(sx, sy - dec.h - 4, dec.w, 5);
+          // Roll-up doors
+          const numDoors = Math.max(1, dec.w / 18 | 0);
+          const doorW = 10;
+          const spacing = (dec.w - numDoors * doorW) / (numDoors + 1);
+          for (let d = 0; d < numDoors; d++) {
+            const dx2 = sx + spacing + d * (doorW + spacing);
+            ctx.fillStyle = "#3a3028";
+            ctx.fillRect(dx2, sy - 12, doorW, 12);
+            // Horizontal slats
+            ctx.fillStyle = "#555040";
+            for (let sl = 2; sl < 12; sl += 3) {
+              ctx.fillRect(dx2, sy - 12 + sl, doorW, 1);
+            }
+          }
+          // Skylights on roof
+          ctx.fillStyle = "#aabbcc";
+          ctx.fillRect(sx + 6, sy - dec.h - 3, 8, 3);
+          if (dec.w > 38) ctx.fillRect(sx + dec.w - 14, sy - dec.h - 3, 8, 3);
+          break;
+        }
+      }
+    }
+  }
+
+  function drawEntities() {
+    for (const ent of entities) {
+      const sy = H - (ent.y - scroll);
+      if (sy < -58 || sy > H + 48) continue;
+
+      if (ent.type === "bridge") {
+        const dmgRatio = (ent.hp || 1) / (ent.maxHp || 5);
+        const mainColor = dmgRatio > 0.6 ? "#6a5a4a" : dmgRatio > 0.3 ? "#8a4a2a" : "#aa3a1a";
+        const subColor  = dmgRatio > 0.6 ? "#4a4038" : dmgRatio > 0.3 ? "#6a3020" : "#7a2810";
+        const pilColor  = dmgRatio > 0.6 ? "#3a3530" : dmgRatio > 0.3 ? "#4a2010" : "#5a1800";
+        ctx.fillStyle = mainColor;
+        ctx.fillRect(ent.left, sy - 28, ent.right - ent.left, 10);
+        ctx.fillStyle = subColor;
+        ctx.fillRect(ent.left, sy - 18, ent.right - ent.left, 6);
+        ctx.fillStyle = pilColor;
+        const span = ent.right - ent.left;
+        for (let x = ent.left + 6; x < ent.right - 6; x += span / 5) {
+          ctx.fillRect(x - 2, sy - 28, 4, 28);
+        }
+        // HP bar
+        if (ent.hp < ent.maxHp) {
+          ctx.fillStyle = "#330000";
+          ctx.fillRect(ent.left, sy - 32, span, 3);
+          ctx.fillStyle = dmgRatio > 0.5 ? "#44bb44" : "#ff8800";
+          ctx.fillRect(ent.left, sy - 32, span * dmgRatio, 3);
+        }
+        continue;
+      }
+
+      const ex = ent.x - ent.w / 2;
+      const ey = sy - ent.h;
+
+      if (ent.type === "fuel") {
+        // Kadlub cysterny
+        ctx.fillStyle = "#4a6a3a";
+        ctx.fillRect(ex, ey + 6, ent.w, ent.h - 6);
+        // Zbiorniki (cylindry)
+        ctx.fillStyle = "#cc4400";
+        ctx.fillRect(ex + 3, ey, 12, 10);
+        ctx.fillRect(ex + 17, ey, 12, 10);
+        ctx.fillStyle = "#ff6622";
+        ctx.fillRect(ex + 5, ey + 1, 8, 4);
+        ctx.fillRect(ex + 19, ey + 1, 8, 4);
+        // Paski ostrzegawcze
+        ctx.fillStyle = "#ffcc00";
+        ctx.fillRect(ex + 3, ey + 10, 26, 2);
+        // Poziom paliwa w zbiorniku
+        const fuelPct = (ent.fuelLeft || 0) / 85;
+        ctx.fillStyle = "#331100";
+        ctx.fillRect(ex + 3, ey - 4, 26, 3);
+        ctx.fillStyle = fuelPct > 0.5 ? "#44ff44" : fuelPct > 0.2 ? "#ffaa00" : "#ff3333";
+        ctx.fillRect(ex + 3, ey - 4, 26 * fuelPct, 3);
+        continue;
+      }
+
+      if (ent.type === "shield_pickup") {
+        const cx2 = ent.x, cy2 = sy - ent.h / 2;
+        const pulse = 0.7 + 0.3 * Math.sin(Date.now() * 0.008);
+        ctx.globalAlpha = pulse;
+        ctx.fillStyle = "#44aaff";
+        ctx.beginPath();
+        ctx.arc(cx2, cy2, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#aaddff";
+        ctx.beginPath();
+        ctx.arc(cx2, cy2, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 8px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("S", cx2, cy2 + 3);
+        ctx.textAlign = "left";
+        continue;
+      }
+
+      if (ent.type === "fast_shoot" && !ent.taken) {
+        const cx2 = ent.x, cy2 = sy - ent.h / 2;
+        const pulse = 0.65 + 0.35 * Math.sin(Date.now() * 0.012);
+        ctx.globalAlpha = pulse;
+        ctx.fillStyle = "#ffcc00";
+        ctx.beginPath();
+        ctx.arc(cx2, cy2, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ff8800";
+        ctx.beginPath();
+        ctx.arc(cx2, cy2, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#1a1000";
+        ctx.font = "bold 8px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("F", cx2, cy2 + 3);
+        ctx.textAlign = "left";
+        continue;
+      }
+
+      if (ent.type === "rescue_boat") {
+        const pulse = 0.7 + 0.3 * Math.sin(Date.now() * 0.006);
+        ctx.globalAlpha = pulse;
+        // Kadlub
+        ctx.fillStyle = "#44cc44";
+        ctx.fillRect(ex, ey + 4, ent.w, ent.h - 4);
+        // Dach / kabina
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(ex + 3, ey, ent.w - 6, 6);
+        // Krzyzyk (symbol zycia)
+        ctx.fillStyle = "#ff2222";
+        ctx.fillRect(ex + ent.w / 2 - 1, ey + 1, 2, 4);
+        ctx.fillRect(ex + ent.w / 2 - 3, ey + 2, 6, 2);
+        ctx.globalAlpha = 1;
+        continue;
+      }
+
+      if (ent.type === "ship") {
+        const mw = ent.w, mh = ent.h;
+        // Hull - dark grey warship body with tapered bow and stern
+        ctx.fillStyle = "#4a4a5a";
+        ctx.beginPath();
+        ctx.moveTo(ex + 3, ey + mh);         // stern left
+        ctx.lineTo(ex + mw - 3, ey + mh);   // stern right
+        ctx.lineTo(ex + mw, ey + mh - 4);   // stern corner
+        ctx.lineTo(ex + mw, ey + 6);         // side right
+        ctx.lineTo(ex + mw / 2, ey);         // bow tip
+        ctx.lineTo(ex, ey + 6);              // side left
+        ctx.lineTo(ex, ey + mh - 4);         // stern corner left
+        ctx.closePath();
+        ctx.fill();
+        // Deck superstructure (lighter)
+        ctx.fillStyle = "#6a6a7a";
+        ctx.fillRect(ex + 3, ey + 5, mw - 6, 5);
+        // Bridge/command tower
+        ctx.fillStyle = "#888898";
+        ctx.fillRect(ex + mw / 2 - 3, ey + 3, 6, 5);
+        // Cannon barrel (pointing up/toward player)
+        ctx.fillStyle = "#333344";
+        ctx.fillRect(ex + mw / 2 - 1, ey - 5, 2, 6);
+        ctx.fillRect(ex + mw / 2 - 3, ey - 3, 6, 2);
+        // Wake lines at bottom
+        ctx.strokeStyle = "#6688aa";
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(ex - 3, ey + mh - 1); ctx.lineTo(ex + 3, ey + mh + 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ex + mw + 3, ey + mh - 1); ctx.lineTo(ex + mw - 3, ey + mh + 2); ctx.stroke();
+        if (ent.hp < ent.maxHp) {
+          ctx.fillStyle = "#882222";
+          ctx.fillRect(ex, ey - 8, mw, 3);
+          ctx.fillStyle = "#44bb44";
+          ctx.fillRect(ex, ey - 8, mw * ent.hp / ent.maxHp, 3);
+        }
+        continue;
+      }
+
+      if (ent.type === "heli") {
+        const hx = ex + ent.w / 2, mh = ent.h, mw = ent.w;
+        // Tail boom extending to one side
+        ctx.fillStyle = "#557755";
+        ctx.fillRect(ex + mw - 5, ey + mh / 2 - 1, 10, 3);
+        ctx.fillRect(ex + mw + 4, ey + mh / 2 - 3, 2, 6); // tail rotor stub
+        // Body - olive green egg shape
+        ctx.fillStyle = "#4a7a4a";
+        ctx.beginPath();
+        ctx.ellipse(hx, ey + mh / 2 + 1, mw / 2 - 2, mh / 2 - 1, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Cockpit bubble - darker transparent front
+        ctx.fillStyle = "#2a5a6a";
+        ctx.beginPath();
+        ctx.ellipse(hx - 2, ey + mh / 2, mw / 4, mh / 3, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#88cccc";
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+        // Rotor mast
+        ctx.fillStyle = "#334433";
+        ctx.fillRect(hx - 1, ey - 3, 2, 5);
+        // Spinning rotor blades
+        const rot = (Date.now() * 0.015) % (Math.PI * 2);
+        ctx.strokeStyle = "#99bb99";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(hx + Math.cos(rot) * (mw / 2 + 2), ey - 1 + Math.sin(rot) * 2);
+        ctx.lineTo(hx - Math.cos(rot) * (mw / 2 + 2), ey - 1 - Math.sin(rot) * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(hx + Math.cos(rot + Math.PI / 2) * (mw / 2 + 2), ey - 1 + Math.sin(rot + Math.PI / 2) * 2);
+        ctx.lineTo(hx - Math.cos(rot + Math.PI / 2) * (mw / 2 + 2), ey - 1 - Math.sin(rot + Math.PI / 2) * 2);
+        ctx.stroke();
+        // Landing skids
+        ctx.strokeStyle = "#336633";
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(ex + 1, ey + mh); ctx.lineTo(ex + mw - 1, ey + mh); ctx.stroke();
+        if (ent.hp < ent.maxHp) {
+          ctx.fillStyle = "#882222";
+          ctx.fillRect(ex, ey - 10, mw, 3);
+          ctx.fillStyle = "#44bb44";
+          ctx.fillRect(ex, ey - 10, mw * ent.hp / ent.maxHp, 3);
+        }
+        ctx.lineWidth = 1;
+        continue;
+      }
+
+      if (ent.type === "plane") {
+        const px = ex + ent.w / 2, mh = ent.h, mw = ent.w;
+        // Wings - swept delta wings extending left/right
+        ctx.fillStyle = "#884422";
+        ctx.beginPath();
+        ctx.moveTo(px, ey + 3);           // nose
+        ctx.lineTo(ex - 5, ey + mh - 2); // left wingtip
+        ctx.lineTo(ex + 3, ey + mh - 2); // left wing root
+        ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(px, ey + 3);           // nose
+        ctx.lineTo(ex + mw + 5, ey + mh - 2); // right wingtip
+        ctx.lineTo(ex + mw - 3, ey + mh - 2); // right wing root
+        ctx.closePath();
+        ctx.fill();
+        // Fuselage - narrow vertical body
+        ctx.fillStyle = "#cc7744";
+        ctx.beginPath();
+        ctx.moveTo(px, ey);               // nose tip
+        ctx.lineTo(px + 3, ey + mh - 4); // fuselage right
+        ctx.lineTo(px + 2, ey + mh);     // tail right
+        ctx.lineTo(px - 2, ey + mh);     // tail left
+        ctx.lineTo(px - 3, ey + mh - 4); // fuselage left
+        ctx.closePath();
+        ctx.fill();
+        // Cockpit canopy
+        ctx.fillStyle = "#336688";
+        ctx.beginPath();
+        ctx.ellipse(px, ey + 6, 2.5, 3, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Engine exhaust at tail
+        ctx.fillStyle = "#ff6600";
+        ctx.beginPath();
+        ctx.arc(px, ey + mh + 1, 2, 0, Math.PI * 2);
+        ctx.fill();
+        if (ent.hp < ent.maxHp) {
+          ctx.fillStyle = "#882222";
+          ctx.fillRect(ex, ey - 5, mw, 3);
+          ctx.fillStyle = "#44bb44";
+          ctx.fillRect(ex, ey - 5, mw * ent.hp / ent.maxHp, 3);
+        }
+        continue;
+      }
+
+      if (ent.type === "tank") {
+        // Body
+        ctx.fillStyle = "#556633";
+        ctx.fillRect(ex, ey + 3, ent.w, ent.h - 3);
+        // Turret
+        ctx.fillStyle = "#445522";
+        ctx.fillRect(ex + 3, ey, ent.w - 6, 6);
+        // Barrel pointing toward river
+        const barrelX = ent.side === "left" ? ex + ent.w - 1 : ex - 5;
+        ctx.fillStyle = "#334411";
+        ctx.fillRect(barrelX, ey + 1, 6, 3);
+        // Tracks
+        ctx.fillStyle = "#2a2a18";
+        ctx.fillRect(ex, ey + ent.h - 3, ent.w, 3);
+      }
+    }
+  }
+
+  function drawPlayer() {
+    const { x, y, w, h } = player;
+    const mx = x + w / 2;
+    const guns  = upgrades.guns  || 0;
+    const armor = upgrades.armor || 0;
+    const spd   = upgrades.speed || 0;
+
+    // Shield aura
+    if (shieldTimer > 0) {
+      const pulse = 0.35 + 0.35 * Math.sin(Date.now() * 0.015);
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = shieldTimer < 90 ? "#ff8800" : "#44aaff";
+      ctx.beginPath();
+      ctx.arc(mx, y + h / 2, w + 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Engine glow (speed upgrade)
+    if (spd > 0) {
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = spd >= 3 ? "#00ffff" : spd >= 2 ? "#44ddff" : "#88ccff";
+      ctx.beginPath();
+      ctx.arc(mx - 5, y + h + 4, 3 + spd * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(mx + 5, y + h + 4, 3 + spd * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Wings
+    const wingExt = 4 + spd * 2;
+    ctx.fillStyle = armor >= 2 ? "#7a8298" : "#9aa2b4";
+    ctx.fillRect(x - wingExt, y + h * 0.45, wingExt + 3, 5);
+    ctx.fillRect(x + w - 3,   y + h * 0.45, wingExt + 3, 5);
+
+    // Hull — color shifts with armor
+    const hullCol = armor >= 3 ? "#7a8090" : armor >= 2 ? "#909aaa" : armor >= 1 ? "#aab0be" : "#c0c8d8";
+    ctx.fillStyle = hullCol;
+    ctx.beginPath();
+    ctx.moveTo(mx,     y);           // nose
+    ctx.lineTo(x + w,  y + h - 5);  // right stern
+    ctx.lineTo(mx,     y + h);       // stern centre
+    ctx.lineTo(x,      y + h - 5);  // left stern
+    ctx.closePath();
+    ctx.fill();
+
+    // Armor plating stripe (armor >=2)
+    if (armor >= 2) {
+      ctx.fillStyle = "rgba(80,90,110,0.55)";
+      ctx.fillRect(x + 3, y + h * 0.4, w - 6, 3);
+    }
+
+    // Cockpit canopy
+    ctx.fillStyle = "#66aadd";
+    ctx.beginPath();
+    ctx.moveTo(mx, y + 3);
+    ctx.lineTo(mx + 4, y + 10);
+    ctx.lineTo(mx - 4, y + 10);
+    ctx.closePath();
+    ctx.fill();
+
+    // Wing cannons (guns upgrade)
+    if (guns >= 1) {
+      const barLen = 7 + guns * 2;
+      ctx.fillStyle = "#667788";
+      ctx.fillRect(x - wingExt, y + h * 0.45 + 1, barLen, 2);        // left
+      ctx.fillRect(x + w - barLen + wingExt - 3, y + h * 0.45 + 1, barLen, 2); // right
+    }
+    if (guns >= 3) {
+      // Central cannon
+      ctx.fillStyle = "#889aaa";
+      ctx.fillRect(mx - 1, y, 2, 8);
+    }
+
+    // Engine flame
+    const flameH = 5 + spd * 2;
+    ctx.fillStyle = "#ff4422";
+    ctx.fillRect(mx - 3, y + h, 6, flameH);
+    ctx.fillStyle = "#ffcc44";
+    ctx.fillRect(mx - 1, y + h, 2, flameH - 2);
+  }
+
+  function drawBullets() {
+    ctx.fillStyle = "#ffffaa";
+    for (const b of bullets) {
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+    }
+    // Regular rockets
+    for (const r of rocketAmmo) {
+      ctx.fillStyle = "#ff8800";
+      ctx.fillRect(r.x - 2, r.y - 5, 4, 10);
+      ctx.fillStyle = "#ffee44";
+      ctx.fillRect(r.x - 1, r.y + 5, 2, 5);
+      ctx.fillStyle = "#ffccaa";
+      ctx.fillRect(r.x - 1, r.y - 8, 2, 4);
+    }
+    // Atomic rocket
+    for (const r of atomicAmmo) {
+      // Glow halo
+      const glowAlpha = 0.25 + 0.15 * Math.sin(Date.now() * 0.02);
+      ctx.globalAlpha = glowAlpha;
+      ctx.fillStyle = "#ffff00";
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, 22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      // Body
+      ctx.fillStyle = "#cccccc";
+      ctx.fillRect(r.x - 5, r.y - 12, 10, 22);
+      // Nose
+      ctx.fillStyle = "#ff2200";
+      ctx.beginPath();
+      ctx.moveTo(r.x, r.y - 18);
+      ctx.lineTo(r.x - 5, r.y - 12);
+      ctx.lineTo(r.x + 5, r.y - 12);
+      ctx.closePath();
+      ctx.fill();
+      // Fins
+      ctx.fillStyle = "#aaaaaa";
+      ctx.fillRect(r.x - 9, r.y + 6, 4, 8);
+      ctx.fillRect(r.x + 5, r.y + 6, 4, 8);
+      // Fire
+      ctx.fillStyle = "#ff6600";
+      ctx.fillRect(r.x - 3, r.y + 10, 6, 10);
+      ctx.fillStyle = "#ffee44";
+      ctx.fillRect(r.x - 2, r.y + 14, 4, 8);
+      // Label
+      ctx.fillStyle = "#ff2200";
+      ctx.font = "bold 6px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("ATOM", r.x, r.y);
+      ctx.textAlign = "left";
+    }
+    // Enemy bullets — red circles
+    ctx.fillStyle = "#ff4444";
+    for (const b of enemyBullets) {
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      ctx.globalAlpha = Math.min(1, p.life / 20);
+      ctx.fillStyle = p.col;
+      ctx.fillRect(p.x - 1, p.y - 1, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawRain() {
+    if (score < 80 || rainDrops.length === 0) return;
+    ctx.strokeStyle = "rgba(160, 200, 255, 0.45)";
+    ctx.lineWidth = 1;
+    for (const d of rainDrops) {
+      ctx.beginPath();
+      ctx.moveTo(d.x, d.y);
+      ctx.lineTo(d.x - 2, d.y + d.len);
+      ctx.stroke();
+    }
+  }
+
+  function drawLightning() {
+    if (lightningFlash <= 0) return;
+    ctx.fillStyle = `rgba(240, 240, 200, ${lightningFlash * 0.09})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawNotification() {
+    if (notification.timer <= 0) return;
+    const alpha = Math.min(1, notification.timer / 25);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "#ffff44";
+    ctx.font = "bold 16px 'Courier New', monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(notification.text, W / 2, H / 2);
+    ctx.textAlign = "left";
+    ctx.globalAlpha = 1;
+  }
+
+  function drawTrump() {
+    if (trumpMsg.timer <= 0) return;
+    const alpha = Math.min(1, trumpMsg.timer / 25);
+    ctx.globalAlpha = alpha;
+
+    const lh = 9;
+    const face = [
+      " .-===-, ",   // wlosy
+      "(  o  o )",   // oczy
+      "(  ~~~  )",   // usta
+      " '-----' ",   // szczeka
+      "  | T |  ",   // krawat
+      "  |_|_|  ",   // garnitur
+    ];
+    const faceColors = ["#ffcc00","#f4a460","#f4a460","#f4a460","#1a3acc","#1a3acc"];
+
+    const faceW = 80;
+    const faceH = face.length * lh + 4;
+    const bubbleH = trumpMsg.lines.length * 10 + 10;
+    const totalH = faceH + bubbleH + 8;
+    const x = W - faceW - 4;
+    const y = H - 4;
+
+    // Tlo
+    ctx.fillStyle = "rgba(0,0,0,0.75)";
+    ctx.fillRect(x - 2, y - totalH, faceW + 4, totalH);
+    ctx.strokeStyle = "#888866";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - 2, y - totalH, faceW + 4, totalH);
+
+    // Twarz z literek
+    ctx.font = "bold 8px 'Courier New', monospace";
+    face.forEach((line, i) => {
+      ctx.fillStyle = faceColors[i];
+      ctx.fillText(line, x, y - faceH + i * lh + lh);
+    });
+
+    // Separator
+    ctx.fillStyle = "#666644";
+    ctx.fillRect(x - 2, y - faceH - bubbleH - 4, faceW + 4, 1);
+
+    // Dymek ze slowami
+    ctx.font = "bold 8px 'Courier New', monospace";
+    trumpMsg.lines.forEach((line, i) => {
+      ctx.fillStyle = "#ffff88";
+      ctx.fillText(line, x + 2, y - faceH - bubbleH + 4 + i * 10 + 9);
+    });
+
+    ctx.globalAlpha = 1;
+    trumpMsg.timer--;
+  }
+
+  function drawAtomicBlast() {
+    if (atomicBlast <= 0) return;
+    const t = atomicBlast / 120; // 1 → 0
+
+    // Full-screen white flash (first half)
+    if (atomicBlast > 60) {
+      const alpha = Math.min(0.95, (t - 0.5) * 4);
+      ctx.fillStyle = `rgba(255, 255, 230, ${alpha})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // Expanding shockwave ring
+    const ringR = (1 - t) * W * 0.75;
+    if (ringR > 4) {
+      ctx.strokeStyle = `rgba(255, 160, 30, ${t * 0.9})`;
+      ctx.lineWidth = Math.max(2, 14 * t);
+      ctx.beginPath();
+      ctx.arc(W / 2, H / 2, ringR, 0, Math.PI * 2);
+      ctx.stroke();
+      // Second ring (smaller, faster)
+      ctx.strokeStyle = `rgba(255, 230, 80, ${t * 0.6})`;
+      ctx.lineWidth = Math.max(1, 6 * t);
+      ctx.beginPath();
+      ctx.arc(W / 2, H / 2, ringR * 0.55, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Radial glow at center
+    const grad = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, 280 * (1 - t) + 60);
+    grad.addColorStop(0, `rgba(255, 240, 120, ${Math.min(1, t * 1.8) * 0.85})`);
+    grad.addColorStop(0.4, `rgba(255, 100, 0, ${t * 0.55})`);
+    grad.addColorStop(1, `rgba(255, 40, 0, 0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // "BOOM" text
+    if (atomicBlast > 50) {
+      const scale = 2 - t;
+      const alpha = Math.min(1, (atomicBlast - 50) / 30);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "#ff2200";
+      ctx.font = `bold ${Math.floor(48 * scale)}px 'Courier New', monospace`;
+      ctx.textAlign = "center";
+      ctx.fillText("BOOM!", W / 2, H / 2 - 20);
+      ctx.fillStyle = "#ffee44";
+      ctx.font = `bold ${Math.floor(22 * scale)}px 'Courier New', monospace`;
+      ctx.fillText("RAKIETA ATOMOWA", W / 2, H / 2 + 28);
+      ctx.textAlign = "left";
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawStageInfo() {
+    const stage = getStage();
+    if (stage < 2) return;
+    const labels = ["", "", "ETAP 2", "ETAP 3", "ETAP 4"];
+    const colors = ["", "", "#88ccff", "#ffaa55", "#ff6666"];
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = colors[stage];
+    ctx.font = "bold 10px 'Courier New', monospace";
+    ctx.textAlign = "right";
+    ctx.fillText(labels[stage], W - 4, 14);
+    ctx.textAlign = "left";
+    ctx.globalAlpha = 1;
+  }
+
+  function draw() {
+    const stage = getStage();
+    let skyColor = "#87ceeb";
+    if (score >= 80) skyColor = "#4a6070";
+    if (stage >= 3) skyColor = "#2a3848";
+    if (stage >= 4) skyColor = "#141c28";
+    ctx.fillStyle = skyColor;
+    ctx.fillRect(0, 0, W, H);
+
+    drawRiver();
+    drawDecorations();
+    drawEntities();
+    drawBullets();
+    drawPlayer();
+    drawParticles();
+    drawRain();
+    drawLightning();
+    drawNotification();
+    drawStageInfo();
+    drawTrump();
+    drawAtomicBlast();
+
+    // Pause overlay
+    if (paused) {
+      ctx.fillStyle = "rgba(0,0,0,0.60)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "#7fdc7f";
+      ctx.font = "bold 36px 'Courier New', monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("PAUZA", W / 2, H / 2 - 20);
+      ctx.fillStyle = "#4a7a4a";
+      ctx.font = "14px 'Courier New', monospace";
+      ctx.fillText("[ESC]  —  kontynuuj", W / 2, H / 2 + 14);
+      ctx.textAlign = "left";
+    }
+
+    if (isRefueling) {
+      ctx.fillStyle = "#44ff88";
+      ctx.font = "bold 9px 'Courier New', monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("TANKOWANIE...", player.x + player.w / 2, player.y - 6);
+      ctx.textAlign = "left";
+    }
+
+    // Combo indicator
+    if (comboMult >= 2 && comboTimer > 0) {
+      const alpha = Math.min(1, comboTimer / 40);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = comboMult >= 4 ? "#ff4444" : comboMult >= 3 ? "#ff9900" : "#ffff00";
+      ctx.font = "bold 14px 'Courier New', monospace";
+      ctx.textAlign = "left";
+      ctx.fillText("x" + comboMult + " COMBO", 8, 30);
+      ctx.globalAlpha = 1;
+    }
+
+    // Shield bar
+    if (shieldTimer > 0) {
+      const barW = 60;
+      const pct = shieldTimer / 360;
+      ctx.fillStyle = "#002244";
+      ctx.fillRect(8, H - 14, barW, 6);
+      ctx.fillStyle = shieldTimer < 90 ? "#ff8800" : "#44aaff";
+      ctx.fillRect(8, H - 14, barW * pct, 6);
+      ctx.fillStyle = "#aaddff";
+      ctx.font = "8px 'Courier New', monospace";
+      ctx.fillText("TARCZA", 8, H - 17);
+    }
+
+    // Fast-shoot bar
+    if (fastShootTimer > 0) {
+      const barW = 60;
+      const pct = fastShootTimer / 320;
+      ctx.fillStyle = "#332200";
+      ctx.fillRect(8, H - 30, barW, 6);
+      ctx.fillStyle = "#ffcc00";
+      ctx.fillRect(8, H - 30, barW * pct, 6);
+      ctx.fillStyle = "#ffee88";
+      ctx.font = "8px 'Courier New', monospace";
+      ctx.fillText("RAPID", 8, H - 33);
+    }
+
+    // Rocket counters
+    if (rockets > 0) {
+      ctx.fillStyle = "#ff8800";
+      ctx.font = "bold 10px 'Courier New', monospace";
+      ctx.textAlign = "right";
+      ctx.fillText("[Ctrl] RAKIETY: " + rockets, W - 6, 28);
+      ctx.textAlign = "left";
+    }
+    if (atomicRockets > 0) {
+      ctx.fillStyle = "#ff2200";
+      ctx.font = "bold 10px 'Courier New', monospace";
+      ctx.textAlign = "right";
+      ctx.fillText("[Alt] \u2622 ATOMOWA: " + atomicRockets, W - 6, 42);
+      ctx.textAlign = "left";
+    }
+
+    // Upgrade progress hint
+    {
+      const nextAt = (Math.floor(score / 5000) + 1) * 5000;
+      const pct = (score % 5000) / 5000;
+      const barW = 80;
+      ctx.fillStyle = "#112211";
+      ctx.fillRect(W - barW - 6, H - 14, barW, 5);
+      ctx.fillStyle = "#44aa44";
+      ctx.fillRect(W - barW - 6, H - 14, barW * pct, 5);
+      ctx.fillStyle = "#5a9a5a";
+      ctx.font = "7px 'Courier New', monospace";
+      ctx.textAlign = "right";
+      ctx.fillText("ULEPSZ " + nextAt, W - 6, H - 17);
+      ctx.textAlign = "left";
+    }
+
+    // Fuel gauge — segmented bars on left side
+    {
+      const barCount = 10;
+      const barH = 16;
+      const barW = 26;
+      const gap = 3;
+      const totalH = barCount * (barH + gap) - gap;
+      const gx = 6;
+      const gy = H / 2 - totalH / 2;
+      ctx.font = "7px 'Courier New', monospace";
+      ctx.fillStyle = "#8ab08a";
+      ctx.textAlign = "left";
+      ctx.fillText("PALIWO", gx, gy - 7);
+      const filledBars = Math.ceil(Math.max(0, fuel) / 100 * barCount);
+      for (let i = 0; i < barCount; i++) {
+        const by = gy + (barCount - 1 - i) * (barH + gap);
+        const filled = i < filledBars;
+        ctx.fillStyle = "#0a1a0a";
+        ctx.fillRect(gx, by, barW, barH);
+        if (filled) {
+          const lvl = i / barCount;
+          ctx.fillStyle = lvl < 0.25 ? "#ff2200" : lvl < 0.45 ? "#ff8800" : "#22cc44";
+          ctx.fillRect(gx + 1, by + 1, barW - 2, barH - 2);
+          // shine
+          ctx.fillStyle = "rgba(255,255,255,0.12)";
+          ctx.fillRect(gx + 1, by + 1, barW - 2, 3);
+        }
+        ctx.strokeStyle = filled ? "#44cc66" : "#223322";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(gx + 0.5, by + 0.5, barW - 1, barH - 1);
+      }
+      // Percentage label
+      ctx.fillStyle = "#6a9a6a";
+      ctx.font = "7px 'Courier New', monospace";
+      ctx.fillText(Math.max(0, fuel | 0) + "%", gx, gy + totalH + 10);
+    }
+
+    scoreEl.textContent = "WYNIK " + score;
+    fuelEl.textContent = "PALIWO";
+    livesEl.textContent = "ŻYCIA " + Math.max(0, lives);
+  }
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  updateScoresDisplay();
+
+  btn.addEventListener("click", () => {
+    overlay.classList.add("hidden");
+    resetGame();
+    running = true;
+    btn.textContent = "RESTART  |  [ESC] pauza";
+    // Odblokuj audio przy pierwszym kliknieciu
+    try { ac().resume(); } catch(e) {}
+  });
+
+  requestAnimationFrame(loop);
+})();
+  </script>
+</body>
+</html>
